@@ -1,3 +1,4 @@
+//ALL RIGHT RESERVED FOR ATRT 
 #include <Wire.h>
 #include <PixyI2C.h>
 PixyI2C pixy;
@@ -5,6 +6,9 @@ PixyI2C pixy;
 Adafruit_SH1106 display(-1);
 
 void inti(){
+  pinMode(PC13,OUTPUT); // Built-in LED 
+  pinMode(PC14,OUTPUT); // Spin
+  pinMode(PC15,OUTPUT); // Shoot
   // -------------------- Motor Settings
   pinMode(PB15,OUTPUT);
   pinMode(PB14,OUTPUT);
@@ -45,15 +49,36 @@ void inti(){
   delay(500);
   Serial1.write(0xA5);
   Serial1.write(0x51);
+  // ------------------- PID 
+  last_time = millis();
 }
 void sensors(){
   // -------------------- Set Button
   if(digitalRead(PB5))
   {
     digitalWrite(PC13,0);
+    if(LCD_Print_Mode == 0){
     Serial1.write(0XA5);
     Serial1.write(0X55);
+    }
+    else if(LCD_Print_Mode == 1)    set_ldr();
     while(digitalRead(PB5));
+    digitalWrite(PC13,1);
+
+  }
+  if(digitalRead(PB4))
+  {
+    digitalWrite(PC13,0);
+    LCD_Print_Mode++;
+    LCD_Print_Mode %= 2;
+    while(digitalRead(PB4));
+    digitalWrite(PC13,1);
+  }
+  if(digitalRead(PA15)){
+    digitalWrite(PC13,0);
+    shoot_key();
+    while(digitalRead(PA15));
+    digitalWrite(PC13,1);
   }
   // -------------------- GY-25 Read Data
   Serial1.write(0xA5);
@@ -65,7 +90,7 @@ void sensors(){
     if(counter ==8){
       counter=0;
       if(buff[0]== 0xAA && buff[7] == 0x55){
-          GY=(int16_t) (buff[1]<<8|buff[2])/100;
+          Heading=(int16_t) (buff[1]<<8|buff[2])/100;
       }
     }
   }
@@ -86,10 +111,50 @@ void sensors(){
     }
   }
   // -------------------- Sharp Read Data
-  shb = analogRead(PA0);
-  shr = analogRead(PA1);
-  shl = analogRead(PA2);
-  dif = (shl - shr)/18;
+  sensor[0] = analogRead(PA0);
+  sensor[1] = analogRead(PA1);
+  sensor[2] = analogRead(PA2);
+  sensor[3] = LDR_SET_F - analogRead(PA3);
+  sensor[4] = LDR_SET_R - analogRead(PA4);
+  sensor[5] = LDR_SET_B - analogRead(PA5);
+  sensor[6] = LDR_SET_L - analogRead(PA6);
+  sensor[7] = analogRead(PA7);
+  sensor[8] = analogRead(PA8);
+  if(sensor[3] > LDR_Sensitivity)     LDR_F = true;
+  else                                LDR_F = false;
+  if(sensor[4] > LDR_Sensitivity)     LDR_R = true;
+  else                                LDR_R = false;
+  if(sensor[5] > LDR_Sensitivity)     LDR_B = true;
+  else                                LDR_B = false;
+  if(sensor[6] > LDR_Sensitivity)     LDR_L = true;
+  else                                LDR_L = false;
+  shb = sensor[1];
+  shr = sensor[0];
+  shl = sensor[2];
+  dif = (shl - shr)/12;
+  // -------------------- Shoot Sensor Read Data
+  shoot_sens = analogRead(PA7);
+  if(shoot_sens < 2000) Ball_In_Kicker = true;
+  else                  {Ball_In_Kicker = false;already_shooted = false;}
+  // -------------------- PID Calculations   
+  K_P = Heading;
+  if(millis() - last_time > 3000){
+    if(Heading < 3 && Heading > -3){
+      K_I = 0;
+      K_D = 0;
+    }
+    else {
+      K_I = (K_I + Heading)*1.0;
+      K_D = (Heading - last_Heading)/1.0;
+      if(K_I > 150) K_I = 150;
+      if(K_D > 150) K_D = 150;
+      if(K_I < -150) K_I = -150;
+      if(K_D < -150) K_D = -150;
+    }
+    last_time = millis();
+    last_Heading = Heading;
+  }
+  GY = 0.9 * K_P + 0.15 * K_I + 0.05 * K_D;
 }
 int get_angle(int x, int y){
   int angle = atan2(y - y_robot, x - x_robot)*180/PI;
@@ -108,40 +173,70 @@ int get_direction(int angle){
 }
 void print_all(){
   display.clearDisplay();
-  // --------------------- Pixy Print
-  display.setCursor(0, 0);
-  display.print("X:");
-  display.println(x_ball);
-  display.print("Y:");
-  display.println(y_ball);
-  display.print("dir:");
-  display.println(direction_ball);
-  display.print("dis:");
-  display.println(distance_ball);
-  // --------------------- Sharp Data Print
-  display.print("shb:");
-  display.println(shb);
-  display.print("shl:");
-  display.println(shl);
-  display.print("shr:");
-  display.println(shr);
-  display.print("dif:");
-  display.println(dif);
+  if(LCD_Print_Mode == 0){
+    // --------------------- Pixy Print
+//    display.setCursor(0, 0);
+//    display.print("X:");
+//    display.println(x_ball);
+//    display.print("Y:");
+//    display.println(y_ball);
+//    display.print("ang:");
+//    display.println(angle_ball);
+//    display.print("dir:");
+//    display.println(direction_ball);
+//    display.print("dis:");
+//    display.println(distance_ball);
+    display.setTextSize(1);
+    display.setCursor(0, 0);
+    display.print("X:");
+    display.println(x_ball);
+    display.print("Y:");
+    display.println(y_ball);
+    display.print("dir:");
+    display.println(direction_ball);
+    display.print("dis:");
+    display.println(distance_ball);
+    display.println("ang:");
+    display.setTextSize(1);
+    display.println(angle_ball);
+  }
+  else if(LCD_Print_Mode == 1){
+    display.setTextSize(1);
+    display.setCursor(0, 0);
+    for(int i=0;i<9;i++){
+      display.print(i);
+      display.print(" : ");
+      display.println(sensor[i]);
+    }
+  }
+  
   
   // --------------------- GY-25 Print Circle
   display.drawCircle(80, 32, 12, WHITE);
-  display.drawLine(80 + sin(GY * PI/180) * 9, 32 - cos(GY * PI/180) * 9, 80 - sin(GY * PI/180) * 9, 32 + cos(GY * PI/180) * 9, WHITE);
-  display.fillCircle(80 - sin(GY * PI/180) * 9, 32 + cos(GY * PI/180) * 9, 2, WHITE);
+  display.drawLine(80 + sin(Heading * PI/180) * 9, 32 - cos(Heading * PI/180) * 9, 80 - sin(Heading * PI/180) * 9, 32 + cos(Heading * PI/180) * 9, WHITE);
+  display.fillCircle(80 - sin(Heading * PI/180) * 9, 32 + cos(Heading * PI/180) * 9, 2, WHITE);
   // --------------------- Ball Print Circle
-  if(is_ball)
+  if(Ball_In_Kicker)
+    display.fillCircle(80, 32 - 16 , 3, WHITE);
+  else if(is_ball)
     display.fillCircle(80 + sin(angle_ball * PI/180) * 20, 32 - cos(angle_ball * PI/180) * 20, 3, WHITE);
-  // --------------------- Out Shape
-  if(shr > Wall_Distance) display.fillRect(105, 27, 3, 10, WHITE);
-  if(shl > Wall_Distance) display.fillRect(53, 27, 3, 10, WHITE);
-  if(shb > Wall_Distance) display.fillRect(75, 57, 10, 3, WHITE);
-  
+  // --------------------- Out LDR
+  // if(shr > Wallr_Distance) display.fillRect(105, 27, 3, 10, WHITE);
+  // if(shl > Walll_Distance) display.fillRect(53, 27, 3, 10, WHITE);
+  // if(shb > back_Distance ) display.fillRect(75, 57, 10, 3, WHITE);
+  if(LDR_F)    display.fillRect(80-2, 32-16, 4, 6, WHITE);
+  if(LDR_B)    display.fillRect(80-2, 32+10, 4, 6, WHITE);
+  if(LDR_R)    display.fillRect(80+10, 32-2, 6, 4, WHITE);
+  if(LDR_L)    display.fillRect(80-16, 32-2, 6, 4, WHITE);
 
   display.display();
+}
+void set_ldr(){
+  LDR_SET_F = analogRead(PA3);
+  LDR_SET_R = analogRead(PA4);
+  LDR_SET_B = analogRead(PA5);
+  LDR_SET_L = analogRead(PA6);
+
 }
 void motor(int ML1, int ML2 , int MR2 , int MR1) {
   ML1 += GY;
@@ -215,24 +310,39 @@ void move(int direction){
   if(direction == 15) motor(v/2,v,-v/2,-v);
 }
 void out_sharp(){
-  if(shr > Wall_Distance){
+  if(shr > Wallr_Distance){
     while(direction_ball < 8 && direction_ball > 0 && is_ball){
       sensors();
       print_all();
-      v = 130;
-      if(shr > Wall_Distance + 300) move(12);
+      v = 255;
+      if(shr > Wallr_Distance + 300) move(12);
       else                          stop();
     }
   }
-  if(shl > Wall_Distance){
+  if(shl > Walll_Distance){
     while(direction_ball > 8 && is_ball){
       sensors();
       print_all();
-      v = 130;
-      if(shl > Wall_Distance + 300) move(4);
-      else                          stop();
+      v = 255;
+      if(shl > Walll_Distance + 300) move(4);
+      else                           stop();
     }
   }
+  ////////////////////////////////////////////  
+  
+  if(shb > b ){
+    while((direction_ball >= 1 && direction_ball <= 9) && is_ball){
+      sensors();
+      print_all();
+      v = 255;
+      if(shb > b + 200) move(0);
+      else                           stop();
+    }
+  }
+  
+  ///////////////////////////////////////////////////
+
+  
 }
 void stop(){
   motor(0, 0, 0, 0);
@@ -240,6 +350,201 @@ void stop(){
 void movexy(int x, int y){
   motor((x+y)/2, (y-x)/2, (-x-y)/2, (x-y)/2);
 }
-void moveangle(int angle){
+void moveAngle(int angle){
+  if(angle > 360) angle -= 360;
+  if(angle < 0)   angle += 360;
   movexy(v * sin(angle * PI/180), v * cos(angle * PI/180));
+}
+void come_back(){
+  v = 120;
+  if(shl > 1200 || shr > 1200)   motor(dif, -dif, -dif, dif);
+  else if(shb < back_Distance)   motor(-v + dif, -v - dif, v - dif, v + dif);
+  else                           motor(0, 0, 0, 0);
+}
+void AI_1(){
+  sensors();
+  print_all();
+  out_sharp();
+  if(is_ball){
+    if(distance_ball > 70) {
+      v = 250;
+      move(direction_ball);
+    }  
+    else{
+      v = 130;
+      if(direction_ball==0)        move(direction_ball);
+      else if(direction_ball==1)   move(direction_ball + 1);
+      else if(direction_ball==15)  move(direction_ball - 1);
+      else if(direction_ball <=3)  move(direction_ball + 2);
+      else if(direction_ball <=8)  move(direction_ball + 3);
+      else if(direction_ball <=13) move(direction_ball - 3);
+      else                         move(direction_ball - 2);
+    }
+  }
+
+  else {
+    come_back();
+  }
+  
+}
+void AI_2(){
+  sensors();
+  print_all();
+  out();
+  if(Ball_In_Kicker){
+    v=160;
+    move(0);
+    shoot();    
+  }
+  else if(is_ball){
+    if(distance_ball > 50){
+      v = 290;
+      moveAngle(angle_ball);
+    }
+    else{
+      v = 190 ;
+      if(angle_ball < 5 || angle_ball > 355)  moveAngle(angle_ball);
+      else if(angle_ball < 20)                moveAngle(angle_ball + 30);
+      else if(angle_ball < 90)                moveAngle(angle_ball + 50);
+      else if(angle_ball < 180)               moveAngle(angle_ball + 80);
+      else if(angle_ball < 270)               moveAngle(angle_ball - 80);
+      else if(angle_ball < 340)               moveAngle(angle_ball - 50);
+      else                                    moveAngle(angle_ball - 30);
+    }
+  }
+  else come_back();
+}
+void shoot_key(){
+    digitalWrite(PC15, 1);
+    delay(70);
+    digitalWrite(PC15, 0);
+    delay(200); 
+}
+void shoot(){
+  if(already_shooted) return;
+  if(Ball_In_Kicker){
+    digitalWrite(PC15, 1);
+    delay(70);
+    digitalWrite(PC15, 0);
+    delay(200);
+    already_shooted = true;
+  }
+}
+void moveForSec(int dir, int sec){
+  for(int i=0; i<sec; i++){
+    sensors();
+    print_all();
+    move(dir);
+  }
+}
+void moveInside(){
+  if(LDR_R && LDR_F) move(10);
+  if(LDR_L && LDR_F) move(6);
+  if(LDR_R && LDR_B) move(14);
+  if(LDR_L && LDR_B) move(2);
+  if(LDR_F) move(8);
+  if(LDR_R) move(12);
+  if(LDR_B) move(0);
+  if(LDR_L) move(4);
+}
+void out(){
+  out_cnt = 0;
+  if(LDR_F && LDR_R){
+    v = 200;
+    moveForSec(10, 5);
+    while((angle_ball < 170 || angle_ball > 280) && is_ball && out_cnt < 100){
+      sensors();
+      print_all();
+      v = 190;
+      if(LDR_R || LDR_F || LDR_B || LDR_L) moveInside();
+      else stop();
+      out_cnt++;
+    }
+  }
+  else if(LDR_F && LDR_L){
+    v = 200;
+    moveForSec(6, 5);
+    while((angle_ball < 80 || angle_ball > 190) && is_ball && out_cnt < 100){
+      sensors();
+      print_all();
+      v = 190;
+      if(LDR_R || LDR_F || LDR_B || LDR_L) moveInside();
+      else stop();
+      out_cnt++;
+    }
+  }
+  else if(LDR_B && LDR_L){
+    v = 200;
+    moveForSec(2, 5);
+    while(angle_ball > 100 && angle_ball < 350 && is_ball && out_cnt < 100){
+      sensors();
+      print_all();
+      v = 190;
+      if(LDR_R || LDR_F || LDR_B || LDR_L) moveInside();
+      else stop();
+      out_cnt++;
+    }
+  }
+  
+  else if(LDR_B && LDR_R){
+    v = 200;
+    moveForSec(14, 5);
+    while(angle_ball > 10 && angle_ball < 260 && is_ball && out_cnt < 100){
+      sensors();
+      print_all();
+      v = 190;
+      if(LDR_R || LDR_F || LDR_B || LDR_L) moveInside();
+      else stop();
+      out_cnt++;
+    }
+  }
+  else if(LDR_F){
+    v = 200;
+    moveForSec(8, 15);
+    while((angle_ball < 90 || angle_ball > 270) && is_ball && out_cnt < 100){
+      sensors();
+      print_all();
+      v = 190;
+      if(LDR_R || LDR_F || LDR_B || LDR_L) moveInside();
+      else stop();
+      out_cnt++;
+    }
+  }
+  else if(LDR_R){
+    v = 200;
+    moveForSec(12, 10);
+    while(angle_ball < 180 && is_ball && out_cnt < 100){
+      sensors();
+      print_all();
+      v = 190;
+      if(LDR_R || LDR_F || LDR_B || LDR_L) moveInside();
+      else stop();
+      out_cnt++;
+    }
+  }
+  else if(LDR_B){
+    v = 200;
+    moveForSec(0, 15);
+    while(angle_ball > 90 && angle_ball < 270 && is_ball && out_cnt < 100){
+      sensors();
+      print_all();
+      v = 190;
+      if(LDR_R || LDR_F || LDR_B || LDR_L) moveInside();
+      else stop();
+      out_cnt++;
+    }
+  }
+  else if(LDR_L){
+    v = 200;
+    moveForSec(4, 10);
+    while(angle_ball > 180 && is_ball && out_cnt < 100){
+      sensors();
+      print_all();
+      v = 190;
+      if(LDR_R || LDR_F || LDR_B || LDR_L) moveInside();
+      else stop();
+      out_cnt++;
+    }
+  }
+  
 }
